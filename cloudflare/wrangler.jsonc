@@ -1,0 +1,65 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "loseit-mcp",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-09-01",
+
+  // The public hostname. wrangler creates the DNS record and certificate.
+  "routes": [
+    {
+      "pattern": "loseit-mcp.mbrunet.com",
+      "custom_domain": true
+    }
+  ],
+
+  "vars": {
+    // Feeds both LOSEIT_ALLOWED_HOSTS and LOSEIT_PUBLIC_URL in the container.
+    // Must match the route above or every MCP request gets 421.
+    "LOSEIT_HOSTNAME": "loseit-mcp.mbrunet.com"
+  },
+
+  "containers": [
+    {
+      "class_name": "LoseItContainer",
+      // The repo's existing production Dockerfile, unmodified. The wrapper
+      // lives in its own directory so wrangler never reads the Python .env
+      // beside it, so both the file and its build context point one level up.
+      "image": "../Dockerfile",
+      "image_build_context": "..",
+      // Build args for the Dockerfile's BUILD_* ARGs, so /healthz reports what
+      // is actually running. CI rewrites these placeholders before deploying;
+      // a local deploy leaves them as "unknown", which is honest.
+      "image_vars": {
+        "BUILD_COMMIT": "unknown",
+        "BUILD_TIME": "unknown",
+        "BUILD_TAG": "cloudflare"
+      },
+      // 1/4 vCPU, 1 GiB, 4 GB disk. The app is one uvicorn process doing
+      // HTTP calls; memory is the binding constraint and 1 GiB is ample.
+      "instance_type": "basic",
+      // Requests all route to one instance; the second is headroom for the
+      // rolling deploy, which runs old and new side by side.
+      "max_instances": 2
+    }
+  ],
+
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "LOSEIT",
+        "class_name": "LoseItContainer"
+      }
+    ]
+  },
+
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["LoseItContainer"]
+    }
+  ],
+
+  "observability": {
+    "enabled": true
+  }
+}

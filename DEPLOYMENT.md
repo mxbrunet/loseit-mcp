@@ -506,6 +506,93 @@ build is live and lets you point back at the previous tag to roll back.
 - Teardown is `az group delete --name loseit-mcp-rg --yes`. Key Vault
   soft-delete keeps the vault name reserved for 90 days afterwards.
 
+## Cloudflare Workers + Containers
+
+An alternative to App Service. The same image runs in a Cloudflare Container,
+with a small TypeScript Worker in front of it. Everything lives in
+`cloudflare/`, deliberately in its own directory: Wrangler reads a `.env`
+sitting next to its config, and this project keeps real credentials in the
+`.env` at the repo root.
+
+Containers require the **Workers Paid plan**. Compute is billed per second
+while a container is awake and stops when it sleeps, so an instance that is
+idle most of the day costs little beyond the plan itself.
+
+### What the Worker does
+
+It is a proxy, but not a transparent one. Three headers have to be set for the
+app to behave correctly behind it:
+
+| Header | Why |
+| --- | --- |
+| `X-Forwarded-For` | The throttle reads this and nothing else — `CF-Connecting-IP` is invisible to it. The Worker *overwrites* the header rather than appending, so a caller cannot prepend hops and choose their own bucket. It is deleted outright when `CF-Connecting-IP` is absent, so the throttle falls back to the peer address instead of trusting the client. |
+| `X-Forwarded-Proto` | `POST /enroll` builds the URL it returns from this. Without it, the hop from Worker to container is plain HTTP and enrollment would mint `http://` URLs. |
+| `X-Forwarded-Host` | Same reason — it decides the hostname baked into every credential URL. |
+
+Requests all route to `getByName("singleton")`. The session-token cache, the
+throttle buckets, and the per-credential limits live in process memory, so
+spreading requests over several instances would fragment all three.
+
+### Configuration
+
+`LOSEIT_MULTI_TENANT` comes from the image. The Worker's `envVars` supply the
+rest, with `LOSEIT_HOSTNAME` in `wrangler.jsonc` driving both the host allowlist
+and the public URL. Two secrets are set out of band:
+
+```console
+uv run loseit-mcp gen-secret        # for LOSEIT_URL_SECRET
+cd cloudflare
+npx wrangler secret put LOSEIT_URL_SECRET
+npx wrangler secret put LOSEIT_ENROLL_SECRET
+```
+
+Keep both somewhere durable. Rotating `LOSEIT_URL_SECRET` invalidates every
+credential URL ever issued — which is also the only way to revoke one.
+
+> **`LOSEIT_ALLOWED_HOSTS` must match the hostname the container actually
+> receives.** It defaults to localhost-only, and a mismatch means every MCP
+> request gets `421 Invalid Host header` — while `/healthz`, `/`, and `/enroll`
+> keep answering normally, because those routes bypass that middleware. A green
+> health check proves nothing about `/mcp`; test both.
+
+### Deploying
+
+CI does it. `.github/workflows/deploy-cloudflare.yml` runs on pushes to the
+`cloudflare` branch and builds on `ubuntu-latest`, which matters: Cloudflare
+runs linux/amd64, so building on an Apple Silicon machine means emulating it.
+The workflow stamps `BUILD_COMMIT` and `BUILD_TIME` into the image through
+`image_vars`, so `/healthz` names the commit that is actually running.
+
+It needs two repository secrets, `CLOUDFLARE_API_TOKEN` (Workers Scripts: Edit,
+Cloudchamber: Edit, and Workers Routes: Edit on the zone) and
+`CLOUDFLARE_ACCOUNT_ID`.
+
+To run it locally instead:
+
+```console
+cd cloudflare
+npm ci
+npx wrangler dev          # needs Docker or Colima
+npx wrangler deploy
+```
+
+One caveat on `wrangler dev`: it rewrites the request URL and `Host` to the
+custom domain configured in `wrangler.jsonc`, whatever the client actually
+sent. So a local request always arrives at the container as the real hostname,
+and the host allowlist can never be seen rejecting anything locally. That the
+deployed service accepts the right host is worth confirming against the
+deployed hostname; only a production request exercises it.
+
+### Enrolling
+
+With `LOSEIT_ENROLL_SECRET` set, the browser page at `/` can no longer complete
+an enrollment — it has no way to send the header — so enrollment is CLI-only:
+
+```console
+LOSEIT_ENROLL_SECRET=<secret> uv run loseit-mcp enroll https://<host>
+```
+
+
 ## Client configuration
 
 With request headers:

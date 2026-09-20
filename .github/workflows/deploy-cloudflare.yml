@@ -1,0 +1,72 @@
+# Builds the container image and deploys it to Cloudflare Workers + Containers.
+#
+# The build runs here rather than on a developer machine because Cloudflare
+# runs linux/amd64: an Apple Silicon laptop would have to emulate it, while
+# ubuntu-latest builds it natively.
+name: Deploy to Cloudflare
+
+on:
+  push:
+    branches: [cloudflare]
+    # Documentation and tests don't change what gets deployed.
+    paths-ignore:
+      - "**.md"
+      - "tests/**"
+  workflow_dispatch:
+
+# A deploy is a rollout, not something to run twice at once. Don't cancel one
+# in progress — a half-finished container rollout is worse than a queued one.
+concurrency:
+  group: deploy-cloudflare
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: cloudflare/package-lock.json
+
+      - name: Install wrangler
+        working-directory: cloudflare
+        run: npm ci
+
+      # Catches a broken worker/index.ts before it reaches a rollout.
+      - name: Typecheck the Worker
+        working-directory: cloudflare
+        run: |
+          npx wrangler types
+          npx tsc --noEmit
+
+      # Stamps the image so /healthz names the exact commit that is running.
+      # These are Docker build args, so they go through image_vars in the
+      # config rather than through a deploy flag.
+      - name: Stamp the build
+        working-directory: cloudflare
+        run: |
+          sed -i "s|\"BUILD_COMMIT\": \"unknown\"|\"BUILD_COMMIT\": \"${GITHUB_SHA}\"|" wrangler.jsonc
+          sed -i "s|\"BUILD_TIME\": \"unknown\"|\"BUILD_TIME\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"|" wrangler.jsonc
+          grep -A4 image_vars wrangler.jsonc
+
+      - name: Deploy
+        working-directory: cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler deploy
+
+      - name: Verify the deployment is serving
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf --max-time 20 https://loseit-mcp.mbrunet.com/healthz; then
+              echo && echo "healthy" && exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::/healthz did not come up within 5 minutes"
+          exit 1

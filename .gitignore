@@ -31,3 +31,9 @@ tmp-*.json
 probe_*.py
 probe_*.json
 
+
+# Cloudflare Workers wrapper
+cloudflare/node_modules/
+cloudflare/.wrangler/
+cloudflare/worker-configuration.d.ts
+cloudflare/.dev.vars

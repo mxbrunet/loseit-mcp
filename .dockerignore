@@ -22,3 +22,6 @@ Dockerfile
 docker-compose.yml
 captures
 scratch_*.py
+
+# Cloudflare Workers wrapper — never belongs in the Python image
+cloudflare
