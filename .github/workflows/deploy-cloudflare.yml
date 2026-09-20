@@ -60,13 +60,21 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: npx wrangler deploy
 
-      - name: Verify the deployment is serving
+      # Container deploys roll out gradually: the previous instance keeps
+      # serving until it cycles, so a 200 from /healthz proves only that
+      # something is up. Wait for the commit this run built to be the one
+      # actually answering.
+      - name: Verify the new build is serving
         run: |
-          for i in $(seq 1 30); do
-            if curl -sf --max-time 20 https://loseit-mcp.mbrunet.com/healthz; then
-              echo && echo "healthy" && exit 0
+          for i in $(seq 1 40); do
+            commit=$(curl -sf --max-time 20 https://loseit-mcp.mbrunet.com/healthz \
+              | python3 -c "import sys,json; print(json.load(sys.stdin)['build']['commit'])" 2>/dev/null || true)
+            if [ "$commit" = "${GITHUB_SHA}" ]; then
+              echo "serving ${GITHUB_SHA}"
+              exit 0
             fi
-            sleep 10
+            echo "waiting for rollout (currently: ${commit:-no response})"
+            sleep 15
           done
-          echo "::error::/healthz did not come up within 5 minutes"
+          echo "::error::${GITHUB_SHA} was not serving within 10 minutes"
           exit 1
