@@ -30,8 +30,8 @@ DEFAULT_SESSION_FILE = CONFIG_DIR / "session.json"
 
 # Tied to the current Lose It! web build. Override if they ship a new one and
 # the RPCs start failing.
-DEFAULT_STRONG_NAME = "BA1F6675680809C4804FF1CEFF6DD713"
-DEFAULT_POLICY_HASH = "108644F06370DEF41E9A7D9DFEDBBC80"
+DEFAULT_STRONG_NAME = "35F651C0C170664E204B31D0D0E573B1"
+DEFAULT_POLICY_HASH = "1492F6221CAAEF5A225F836D2F8A0BDB"
 DEFAULT_BASE_URL = "https://d3hsih69yn4d89.cloudfront.net/web/"
 
 LOGIN_URL = "https://api.loseit.com/account/login"
